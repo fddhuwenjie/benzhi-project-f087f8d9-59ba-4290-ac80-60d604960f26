@@ -152,8 +152,31 @@ func (s *Service) VerifyBundle(id string) (bool, string, error) {
 	if e != nil {
 		return false, "", e
 	}
-	if v.Bundle == nil {
-		return false, "", invalid("发布包不存在")
+	if v.Package.State != domain.StatePublished || v.Bundle == nil || v.Rehearsal == nil || v.SigningSnapshot == nil {
+		return false, "", invalid("已发布方案的清单组成不完整")
+	}
+	if _, err := s.store.LoadPackageObject(v.Rehearsal.ScriptDigest); err != nil {
+		return false, "", &AppError{Code: "INTEGRITY_ERROR", Message: "演练引用脚本版本不完整: " + err.Error()}
+	}
+	storedRun, err := s.store.LoadRehearsal(id)
+	if err != nil || domain.DigestJSON(storedRun) != domain.DigestJSON(v.Rehearsal) {
+		return false, "", &AppError{Code: "INTEGRITY_ERROR", Message: "演练记录引用不一致"}
+	}
+	storedBundle, err := s.store.LoadBundle(id)
+	if err != nil || domain.DigestJSON(storedBundle) != domain.DigestJSON(v.Bundle) {
+		return false, "", &AppError{Code: "INTEGRITY_ERROR", Message: "发布包引用不一致"}
+	}
+	if v.Bundle.SigningSnapshot == nil || domain.DigestJSON(v.Bundle.SigningSnapshot) != domain.DigestJSON(v.SigningSnapshot) {
+		return false, "", &AppError{Code: "INTEGRITY_ERROR", Message: "发布包签署快照不一致"}
+	}
+	if reviewDigest(v.SigningSnapshot.ReviewSnapshot) != v.SigningSnapshot.ReviewSnapshot.Digest {
+		return false, "", &AppError{Code: "INTEGRITY_ERROR", Message: "审阅清单摘要不一致"}
+	}
+	signingCopy := *v.SigningSnapshot
+	signingDigest := signingCopy.Digest
+	signingCopy.Digest = ""
+	if domain.DigestJSON(signingCopy) != signingDigest {
+		return false, "", &AppError{Code: "INTEGRITY_ERROR", Message: "签署快照摘要不一致"}
 	}
 	m := v.Package.PublishMaterial(v.Bundle.RehearsalSummary, v.Bundle.ApproverID, v.Bundle.ApprovalStatement)
 	d := domain.DigestJSON(m)
