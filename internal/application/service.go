@@ -33,7 +33,11 @@ func (s *Service) load(id string) (*View, error) {
 	if v.Package == nil || domain.DigestJSON(v.Package) != domain.DigestJSON(manifest) {
 		return nil, &AppError{Code: "INTEGRITY_ERROR", Message: "方案当前视图与manifest版本不一致"}
 	}
-	v.Timeline, _ = s.store.Audit(id)
+	timeline, err := s.store.Audit(id)
+	if err != nil {
+		return nil, &AppError{Code: "INTEGRITY_ERROR", Message: "审计历史损坏: " + err.Error()}
+	}
+	v.Timeline = timeline
 	today := time.Now().Format("2006-01-02")
 	for i := range v.Issues {
 		v.Issues[i].Overdue = v.Issues[i].DueDate != "" && v.Issues[i].DueDate < today && v.Issues[i].Status != "已关闭"
@@ -53,7 +57,11 @@ func (s *Service) save(v *View, action string) error {
 	if err := s.store.AppendAudit(e); err != nil {
 		return err
 	}
-	v.Timeline, _ = s.store.Audit(v.Package.PackageID)
+	timeline, err := s.store.Audit(v.Package.PackageID)
+	if err != nil {
+		return &AppError{Code: "INTEGRITY_ERROR", Message: "审计历史损坏: " + err.Error()}
+	}
+	v.Timeline = timeline
 	v.AllowedActions = actions(v.Package.State)
 	return nil
 }

@@ -127,11 +127,15 @@ func (s *Store) AppendAudit(e domain.AuditEvent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	path := filepath.Join(s.root, "audit.jsonl")
-	prev, lines := "", [][]byte{}
+	prev := ""
+	lines := [][]byte{}
 	if b, err := os.ReadFile(path); err == nil {
 		lines = splitLines(b)
-		var last domain.AuditEvent
-		if len(lines) > 0 && json.Unmarshal(lines[len(lines)-1], &last) == nil {
+		for i, line := range lines {
+			var last domain.AuditEvent
+			if err := json.Unmarshal(line, &last); err != nil {
+				return fmt.Errorf("审计记录损坏: 第%d行: %w", i+1, err)
+			}
 			prev = last.Digest
 		}
 	}
@@ -158,9 +162,12 @@ func (s *Store) Audit(id string) ([]domain.AuditEvent, error) {
 		return nil, err
 	}
 	out := []domain.AuditEvent{}
-	for _, line := range splitLines(b) {
+	for i, line := range splitLines(b) {
 		var e domain.AuditEvent
-		if json.Unmarshal(line, &e) == nil && (id == "" || e.PackageID == id) {
+		if err := json.Unmarshal(line, &e); err != nil {
+			return nil, fmt.Errorf("审计记录损坏: 第%d行: %w", i+1, err)
+		}
+		if id == "" || e.PackageID == id {
 			out = append(out, e)
 		}
 	}
