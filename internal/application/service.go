@@ -42,18 +42,34 @@ func (s *Service) load(id string) (*View, error) {
 	return &v, nil
 }
 func (s *Service) save(v *View, action string) error {
+	id := v.Package.PackageID
+	// Capture the published pointers before any write so a later stage
+	// failure can roll readers back to the pre-command revision. For Create
+	// the pointers do not exist, so rollback removes them and the new
+	// revision stays invisible until all three stages commit.
+	manifestSnap, err := s.store.SnapshotPointer("manifests", id)
+	if err != nil {
+		return err
+	}
+	viewSnap, err := s.store.SnapshotPointer("views", id)
+	if err != nil {
+		return err
+	}
 	v.Package.UpdatedAt = time.Now()
-	if err := s.store.SavePackage(v.Package); err != nil {
+	if err = s.store.SavePackage(v.Package); err != nil {
 		return err
 	}
-	if err := s.store.SaveJSON("views", v.Package.PackageID, v); err != nil {
+	if err = s.store.SaveJSON("views", id, v); err != nil {
+		_ = s.store.RestorePointer(manifestSnap)
 		return err
 	}
-	e := domain.AuditEvent{At: time.Now(), Action: action, PackageID: v.Package.PackageID, Revision: v.Package.Revision}
-	if err := s.store.AppendAudit(e); err != nil {
+	audit := domain.AuditEvent{At: time.Now(), Action: action, PackageID: id, Revision: v.Package.Revision}
+	if err = s.store.AppendAudit(audit); err != nil {
+		_ = s.store.RestorePointer(viewSnap)
+		_ = s.store.RestorePointer(manifestSnap)
 		return err
 	}
-	v.Timeline, _ = s.store.Audit(v.Package.PackageID)
+	v.Timeline, _ = s.store.Audit(id)
 	v.AllowedActions = actions(v.Package.State)
 	return nil
 }

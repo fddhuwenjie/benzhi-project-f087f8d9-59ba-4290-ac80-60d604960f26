@@ -185,3 +185,48 @@ func splitLines(b []byte) [][]byte {
 }
 
 func (s *Store) String() string { return fmt.Sprintf("Store(%s)", s.root) }
+
+// PointerSnapshot captures the prior content of a content-addressed pointer file
+// (manifests/<id>.json or views/<id>.json) so that a failed multi-stage
+// persistence can roll the published revision back to its pre-command state.
+type PointerSnapshot struct {
+	Kind, ID string
+	Pointer  []byte
+	Existed  bool
+}
+
+// SnapshotPointer records the current pointer for the given kind and id.
+func (s *Store) SnapshotPointer(kind, id string) (PointerSnapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snap := PointerSnapshot{Kind: kind, ID: id}
+	b, err := os.ReadFile(filepath.Join(s.root, kind, id+".json"))
+	switch {
+	case err == nil:
+		snap.Existed = true
+		snap.Pointer = b
+	case os.IsNotExist(err):
+		snap.Existed = false
+	default:
+		return PointerSnapshot{}, err
+	}
+	return snap, nil
+}
+
+// RestorePointer restores a pointer to its snapshot state. When the snapshot
+// predates the pointer (Existed == false) the pointer file is removed so that
+// readers can no longer observe the newly written revision; immutable
+// content-addressed object files are left behind as harmless unreferenced
+// data because they never publish a revision on their own.
+func (s *Store) RestorePointer(snap PointerSnapshot) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	path := filepath.Join(s.root, snap.Kind, snap.ID+".json")
+	if !snap.Existed {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	return writeAtomic(path, snap.Pointer)
+}
