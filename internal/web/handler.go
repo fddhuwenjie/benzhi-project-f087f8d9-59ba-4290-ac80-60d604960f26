@@ -61,7 +61,7 @@ func (h *Handler) CreatePackage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, e)
 		return
 	}
-	v, e := h.app.Create(meta(q.RequestID, b), application.CreateInput{PackageID: q.PackageID, Title: q.Title, WriterID: q.WriterID, Segments: q.Segments})
+	v, e := h.app.Create(meta(q.RequestID, q.PackageID, "create", b), application.CreateInput{PackageID: q.PackageID, Title: q.Title, WriterID: q.WriterID, Segments: q.Segments})
 	writeResult(w, v, e)
 }
 func (h *Handler) GetPackage(w http.ResponseWriter, r *http.Request) {
@@ -146,8 +146,14 @@ type taskRequest struct {
 	Updates          []application.TaskUpdate `json:"updates"`
 }
 
-func meta(id string, b []byte) application.CommandMeta {
-	return application.CommandMeta{RequestID: id, Fingerprint: domain.DigestJSON(string(b))}
+func meta(requestID, resource, action string, body []byte) application.CommandMeta {
+	// 指纹必须区分目标资源和具体操作：相同 request_id 跨方案或跨操作时不应复用原响应。
+	// 因此将资源和操作纳入摘要，确保只有同一目标上的真实重试才能命中幂等记录。
+	return application.CommandMeta{RequestID: requestID, Fingerprint: domain.DigestJSON(struct {
+		Resource string
+		Action   string
+		Body     string
+	}{resource, action, string(body)})}
 }
 func (h *Handler) PackageAction(w http.ResponseWriter, r *http.Request) {
 	id, a := r.PathValue("id"), r.PathValue("action")
@@ -159,7 +165,7 @@ func (h *Handler) PackageAction(w http.ResponseWriter, r *http.Request) {
 		var b []byte
 		b, e = decode(r, &q)
 		if e == nil {
-			v, e = h.app.EditDraft(id, meta(q.RequestID, b), application.EditDraftInput{ExpectedRevision: q.ExpectedRevision, WriterID: q.WriterID, Segments: q.Segments})
+			v, e = h.app.EditDraft(id, meta(q.RequestID, id, a, b), application.EditDraftInput{ExpectedRevision: q.ExpectedRevision, WriterID: q.WriterID, Segments: q.Segments})
 		}
 	case "baseline-preview":
 		var q freezeRequest
@@ -175,49 +181,49 @@ func (h *Handler) PackageAction(w http.ResponseWriter, r *http.Request) {
 		var b []byte
 		b, e = decode(r, &q)
 		if e == nil {
-			v, e = h.app.Freeze(id, meta(q.RequestID, b), application.BaselineInput{ExpectedRevision: q.ExpectedRevision, Baseline: q.Baseline, PreviewDigest: q.PreviewDigest})
+			v, e = h.app.Freeze(id, meta(q.RequestID, id, a, b), application.BaselineInput{ExpectedRevision: q.ExpectedRevision, Baseline: q.Baseline, PreviewDigest: q.PreviewDigest})
 		}
 	case "validate":
 		var q expectedRequest
 		var b []byte
 		b, e = decode(r, &q)
 		if e == nil {
-			v, e = h.app.Validate(id, meta(q.RequestID, b), q.ExpectedRevision)
+			v, e = h.app.Validate(id, meta(q.RequestID, id, a, b), q.ExpectedRevision)
 		}
 	case "rehearse":
 		var q rehearsalRequest
 		var b []byte
 		b, e = decode(r, &q)
 		if e == nil {
-			v, e = h.app.Rehearse(id, meta(q.RequestID, b), application.RehearsalInput{ExpectedRevision: q.ExpectedRevision, RecorderID: q.RecorderID, Results: q.Results})
+			v, e = h.app.Rehearse(id, meta(q.RequestID, id, a, b), application.RehearsalInput{ExpectedRevision: q.ExpectedRevision, RecorderID: q.RecorderID, Results: q.Results})
 		}
 	case "revise":
 		var q reviseRequest
 		var b []byte
 		b, e = decode(r, &q)
 		if e == nil {
-			v, e = h.app.Revise(id, meta(q.RequestID, b), application.ReviseInput{ExpectedRevision: q.ExpectedRevision, IssueID: q.IssueID, Cause: q.Cause, ChangeSummary: q.ChangeSummary, WriterID: q.WriterID, Segments: q.Segments})
+			v, e = h.app.Revise(id, meta(q.RequestID, id, a, b), application.ReviseInput{ExpectedRevision: q.ExpectedRevision, IssueID: q.IssueID, Cause: q.Cause, ChangeSummary: q.ChangeSummary, WriterID: q.WriterID, Segments: q.Segments})
 		}
 	case "retest":
 		var q expectedRequest
 		var b []byte
 		b, e = decode(r, &q)
 		if e == nil {
-			v, e = h.app.Retest(id, meta(q.RequestID, b), q.ExpectedRevision)
+			v, e = h.app.Retest(id, meta(q.RequestID, id, a, b), q.ExpectedRevision)
 		}
 	case "decision":
 		var q decisionRequest
 		var b []byte
 		b, e = decode(r, &q)
 		if e == nil {
-			v, e = h.app.Decide(id, meta(q.RequestID, b), application.ApproveInput{ExpectedRevision: q.ExpectedRevision, ApproverID: q.ApproverID, Decision: q.Decision, Statement: q.Statement, ReviewDigest: q.ReviewDigest, ConfirmedItemIDs: q.ConfirmedItemIDs})
+			v, e = h.app.Decide(id, meta(q.RequestID, id, a, b), application.ApproveInput{ExpectedRevision: q.ExpectedRevision, ApproverID: q.ApproverID, Decision: q.Decision, Statement: q.Statement, ReviewDigest: q.ReviewDigest, ConfirmedItemIDs: q.ConfirmedItemIDs})
 		}
 	case "tasks":
 		var q taskRequest
 		var b []byte
 		b, e = decode(r, &q)
 		if e == nil {
-			v, e = h.app.BatchTasks(id, meta(q.RequestID, b), application.BatchTasksInput{ExpectedRevision: q.ExpectedRevision, Updates: q.Updates})
+			v, e = h.app.BatchTasks(id, meta(q.RequestID, id, a, b), application.BatchTasksInput{ExpectedRevision: q.ExpectedRevision, Updates: q.Updates})
 		}
 	default:
 		e = &application.AppError{Code: "NOT_FOUND", Message: "操作不存在"}
