@@ -228,32 +228,38 @@ func (s *Service) Revise(id string, meta CommandMeta, in ReviseInput) (*View, er
 		if strings.TrimSpace(in.Cause) == "" || strings.TrimSpace(in.ChangeSummary) == "" {
 			return nil, invalid("必须填写原因与修订说明")
 		}
+		issues := append([]domain.RemediationIssue(nil), v.Issues...)
 		found := false
-		for i := range v.Issues {
-			if v.Issues[i].IssueID == in.IssueID && v.Issues[i].Status != "已关闭" {
-				v.Issues[i].Cause = in.Cause
-				v.Issues[i].ChangeSummary = in.ChangeSummary
+		for i := range issues {
+			if issues[i].IssueID == in.IssueID && issues[i].Status != "已关闭" {
+				issues[i].Cause = in.Cause
+				issues[i].ChangeSummary = in.ChangeSummary
 				found = true
 			}
 		}
 		if !found {
 			return nil, invalid("未找到待整改问题")
 		}
+		var segments []domain.ScriptSegment
 		if len(in.Segments) > 0 {
-			segments, normalizeErr := domain.NormalizeSegments(id, in.Segments)
+			normalized, normalizeErr := domain.NormalizeSegments(id, in.Segments)
 			if normalizeErr != nil {
 				return nil, invalid(normalizeErr.Error())
 			}
-			v.Package.Segments = segments
-			for i := range v.Package.Segments {
-				v.Package.Segments[i].PackageID = id
-				v.Package.Segments[i].RevisionReason = in.ChangeSummary
+			segments = normalized
+			for i := range segments {
+				segments[i].PackageID = id
+				segments[i].RevisionReason = in.ChangeSummary
 			}
 		}
-		for i := range v.Issues {
-			if v.Issues[i].IssueID == in.IssueID {
-				v.Issues[i].Status = "待复验"
+		for i := range issues {
+			if issues[i].IssueID == in.IssueID {
+				issues[i].Status = "待复验"
 			}
+		}
+		v.Issues = issues
+		if len(segments) > 0 {
+			v.Package.Segments = segments
 		}
 		v.Package.AddWriter(in.WriterID)
 		v.Package.Revision++
